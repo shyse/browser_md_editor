@@ -1,0 +1,360 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <title>MD Editor</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.13/codemirror.min.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.13/codemirror.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.13/mode/markdown/markdown.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.13/addon/mode/overlay.js"></script>
+
+    <style>
+        :root {
+            /* --- ダークモード: 高コントラスト設計 --- */
+            --bg-color: #1e1e1e; --text-color: #d4d4d4; --toolbar-bg: #2d2d2d;
+            --border-color: #404040; --accent-color: #007acc; --cursor-color: #ffffff;
+            --activeline-bg: #2a2d2e; --gutter-bg: #1e1e1e; --linenumber-color: #aaaaaa;
+            --whitespace-color: rgba(255, 255, 255, 0.2); --preview-link: #4fc1ff; --table-border: #444444;
+            --code-bg: #252526; --code-text: #cccccc;
+            /* ダーク専用シンタックスカラー */
+            --syn-header: #ce9178 !important; --syn-symbol: #dcdcaa !important; 
+            --syn-strong: #c586c0 !important; --syn-em: #4ec9b0 !important; 
+            --syn-link: #9cdcfe !important; --syn-quote: #6a9955 !important; 
+            --syn-list: #569cd6 !important;
+        }
+        [data-theme="light"] {
+            /* --- ライトモード: 眩しさを抑えた落ち着いたグレーベース --- */
+            --bg-color: #f2f2f2; --text-color: #2c2c2c; --toolbar-bg: #e0e0e0;
+            --border-color: #cccccc; --accent-color: #005fb8; --cursor-color: #000000;
+            --activeline-bg: #e8e8e8; --gutter-bg: #e0e0e0; --linenumber-color: #666666;
+            --whitespace-color: rgba(0, 0, 0, 0.15); --preview-link: #1a73e8; --table-border: #bbbbbb;
+            --code-bg: #e4e4e4; --code-text: #24292e;
+            /* ライト専用シンタックスカラー */
+            --syn-header: #800080 !important; --syn-symbol: #a31515 !important; 
+            --syn-strong: #111111 !important; --syn-em: #006400 !important; 
+            --syn-link: #0000ff !important; --syn-quote: #008000 !important; 
+            --syn-list: #005fb8 !important;
+        }
+
+        /* 共通レイアウト設定 */
+        body, html { margin: 0; padding: 0; height: 100%; font-family: 'Segoe UI', sans-serif; background: var(--bg-color); color: var(--text-color); overflow: hidden; }
+        .container { display: flex; flex-direction: column; height: 100vh; width: 100vw; }
+        
+        /* ツールバー: ボタンの折り返しを許可しiPad等での視認性を確保 */
+        .toolbar { background: var(--toolbar-bg); border-bottom: 1px solid var(--border-color); padding: 8px; display: flex; gap: 6px; align-items: center; flex-wrap: wrap; flex-shrink: 0; z-index: 100; }
+        
+        /* ボタン共通スタイル（タップしやすいサイズ） */
+        button { padding: 4px 8px; min-width: 34px; height: 34px; cursor: pointer; background: var(--bg-color); color: var(--text-color); border: 1px solid var(--border-color); border-radius: 4px; font-size: 13px; display: flex; align-items: center; justify-content: center; box-sizing: border-box; }
+        button:hover { border-color: var(--accent-color); background: var(--toolbar-bg); }
+        button:disabled { opacity: 0.3; cursor: not-allowed; pointer-events: none; }
+        .active { background: var(--accent-color) !important; color: #ffffff !important; font-weight: bold; }
+        
+        .save-btn { min-width: 70px; background: var(--accent-color); color: #fff; font-weight: bold; border: none; }
+        .wide-btn { min-width: 80px; }
+
+        /* 装飾アイコン用デザイン */
+        .btn-h { font-weight: bold; font-family: 'Georgia', serif; }
+        .btn-bold { font-weight: 900; }
+        .btn-italic { font-style: italic; font-family: 'serif'; }
+        .btn-strike { text-decoration: line-through; }
+        .btn-underline { text-decoration: underline; }
+        .btn-hr { border-bottom: 2px solid var(--text-color); width: 14px; height: 0; }
+        .btn-list { font-size: 16px; line-height: 1; }
+        .btn-code { font-family: monospace; font-weight: bold; font-size: 14px; }
+
+        .workspace { display: flex; flex: 1; overflow: hidden; position: relative; width: 100%; }
+
+        /* エディタ本体のスタイル */
+        .CodeMirror { flex: 1; height: 100%; font-family: 'Cascadia Code', 'Consolas', monospace; font-size: 15px; background: var(--bg-color) !important; color: var(--text-color) !important; }
+        .CodeMirror-cursor { border-left: 2px solid var(--cursor-color) !important; }
+        .CodeMirror-gutters { background-color: var(--gutter-bg) !important; border-right: 1px solid var(--border-color) !important; width: 40px; }
+        .CodeMirror-linenumber { color: var(--linenumber-color) !important; opacity: 1 !important; font-size: 11px; }
+        .CodeMirror-activeline-background { background: var(--activeline-bg) !important; }
+
+        /* エディタ内のシンタックスハイライト（強制適用） */
+        .CodeMirror .cm-header { color: var(--syn-header); font-weight: bold; }
+        .CodeMirror .cm-comment { color: var(--syn-symbol); font-weight: bold; } 
+        .CodeMirror .cm-quote { color: var(--syn-quote); font-style: italic; }
+        .CodeMirror .cm-strong { color: var(--syn-strong); font-weight: bold; }
+        .CodeMirror .cm-em { color: var(--syn-em) !important; font-style: italic; }
+        .CodeMirror .cm-link { color: var(--syn-link); text-decoration: underline; }
+        .CodeMirror .cm-url { color: var(--syn-link); opacity: 0.8; }
+        .CodeMirror .cm-variable-2 { color: var(--syn-list); font-weight: bold; } 
+        .CodeMirror .cm-keyword { color: var(--syn-symbol); }
+        .CodeMirror .cm-tag { color: var(--syn-symbol); } 
+        .CodeMirror .cm-string { color: var(--syn-link); } 
+
+        /* スペース・タブの可視化スタイル */
+        .cm-ws-space { position: relative; }
+        .cm-ws-space::before { content: "·"; color: var(--whitespace-color); position: absolute; left: 0; right: 0; text-align: center; pointer-events: none; }
+        .cm-ws-tab { position: relative; }
+        .cm-ws-tab::before { content: "→"; color: var(--whitespace-color); position: absolute; left: 0; pointer-events: none; }
+        .cm-ws-zenkaku { position: relative; }
+        .cm-ws-zenkaku::before { content: "□"; color: var(--whitespace-color); position: absolute; left: 0; right: 0; text-align: center; pointer-events: none; }
+
+        /* プレビュー表示エリア */
+        #preview { flex: 1; height: 100%; overflow-y: auto; padding: 40px; box-sizing: border-box; background: var(--bg-color); line-height: 1.7; border-left: 1px solid var(--border-color); }
+        
+        /* コードブロックの自動折り返し設定 */
+        #preview pre { 
+            background-color: var(--code-bg); color: var(--code-text); padding: 16px; border-radius: 6px; 
+            overflow-x: hidden; white-space: pre-wrap; word-wrap: break-word; border: 1px solid var(--border-color); margin: 1.2em 0; 
+        }
+        #preview p > code { background-color: var(--code-bg); color: var(--code-text); padding: 2px 5px; border-radius: 4px; border: 1px solid var(--border-color); word-break: break-all; }
+        
+        #preview table { border-collapse: collapse; width: 100%; border: 1px solid var(--table-border); margin-bottom: 1.5em; }
+        #preview th, #preview td { border: 1px solid var(--table-border); padding: 8px; }
+        #preview a { color: var(--preview-link); text-decoration: underline; }
+        #preview hr { border: none; border-top: 2px solid var(--border-color); margin: 2em 0; }
+
+        /* 表示モード制御用のクラス定義 */
+        .mode-editor #preview { display: none !important; }
+        .mode-preview .CodeMirror { display: none !important; }
+        .mode-preview #preview { border-left: none !important; }
+        .mode-both .CodeMirror, .mode-both #preview { display: block !important; }
+
+        /* iPad等の狭い画面向けのレイアウト微調整 */
+        @media screen and (max-width: 768px) {
+            #preview { padding: 20px; }
+            .toolbar { padding: 4px; gap: 4px; }
+            button { min-width: 32px; height: 32px; font-size: 12px; }
+            .mode-both .CodeMirror, .mode-both #preview { flex: 1; }
+        }
+
+        /* PDF出力（印刷）時のスタイル: 全モード共通でプレビューのみを出力 */
+        @media print {
+            @page { margin: 20mm; }
+            html, body { background: #ffffff !important; color: #000000 !important; height: auto !important; overflow: visible !important; }
+            .container { display: block !important; height: auto !important; }
+            .toolbar, .CodeMirror, .view-controls, #tips-container { display: none !important; }
+            .workspace { display: block !important; height: auto !important; overflow: visible !important; }
+            #preview { 
+                display: block !important; position: absolute !important; top: 0 !important; left: 0 !important; width: 100% !important; height: auto !important; padding: 0 !important; margin: 0 !important; border: none !important; background: #ffffff !important; color: #000000 !important; overflow: visible !important; z-index: 9999 !important;
+            }
+            #preview pre, #preview code { background: #f5f5f5 !important; color: #000000 !important; border: 1px solid #dddddd !important; white-space: pre-wrap !important; }
+            #preview table, #preview th, #preview td { border-color: #000000 !important; }
+        }
+        /* 通知チップ用スタイル */
+        #tips-container { position: fixed; bottom: 20px; right: 20px; padding: 10px 20px; background: var(--accent-color); color: #fff; border-radius: 20px; font-size: 12px; display: none; z-index: 3000; }
+    </style>
+</head>
+<body class="mode-both">
+<div id="tips-container"></div>
+<div class="container">
+    <div class="toolbar">
+        <button onclick="newFile()">新規</button>
+        <button onclick="openFile()">開く</button>
+        <button onclick="saveFile()" id="saveBtn" class="save-btn">保存</button>
+        <button onclick="window.print()" id="pdfBtn" class="wide-btn">PDF</button>
+        <button onclick="toggleBrMode()" id="brModeBtn" class="wide-btn">改行: 標準</button>
+        <button onclick="toggleTheme()" id="themeBtn" class="wide-btn">☀️ ライト</button>
+        
+        <div style="width:1px; height:18px; background:var(--border-color); margin: 0 4px;"></div>
+        
+        <button onclick="insert('# ', '')" title="H1"><span class="btn-h">H1</span></button>
+        <button onclick="insert('## ', '')" title="H2"><span class="btn-h">H2</span></button>
+        <button onclick="insert('### ', '')" title="H3"><span class="btn-h">H3</span></button>
+        <button onclick="insert('**', '**')" title="Bold"><span class="btn-bold">B</span></button>
+        <button onclick="insert('*', '*')" title="Italic"><span class="btn-italic">I</span></button>
+        <button onclick="insert('<u>', '</u>')" title="Underline"><span class="btn-underline">U</span></button>
+        <button onclick="insert('~', '~')" title="Strike"><span class="btn-strike">S</span></button>
+        <button onclick="insert('\n---\n', '')" title="HR"><span class="btn-hr"></span></button>
+        <button onclick="insert('- ', '')" title="List"><span class="btn-list">•</span></button>
+        <button onclick="insert('1. ', '')" title="NumList"><span class="btn-list">1.</span></button>
+        <button onclick="insert('```\n', '\n```')" title="Code"><span class="btn-code">&lt;&gt;</span></button>
+        <button onclick="insert('[', '](url)')" style="color:var(--preview-link);">Link</button>
+        <button onclick="insertTable()">Table</button>
+        
+        <div class="view-controls" style="margin-left:auto; display:flex; gap:4px;">
+            <button id="btn-editor" onclick="setView('editor')">編集</button>
+            <button id="btn-both" class="active" onclick="setView('both')">両方</button>
+            <button id="btn-preview" onclick="setView('preview')">表示</button>
+        </div>
+    </div>
+    <div class="workspace">
+        <textarea id="hidden-editor"></textarea>
+        <div id="preview"></div>
+    </div>
+</div>
+
+<script>
+    let fileHandle = null;     // ファイルシステムのハンドル保持用
+    let isModified = false;    // 変更ありフラグ
+    let brModeStrict = false;  // 改行モード管理
+
+    // marked.js の初期設定
+    marked.setOptions({ breaks: true, gfm: true });
+
+    // 不可視文字の表示ロジック（CodeMirrorオーバーレイアドオン）
+    CodeMirror.defineMode("whitespace-overlay", function() {
+        return {
+            token: function(stream) {
+                if (stream.peek() === " ") { stream.next(); return "ws-space"; }
+                if (stream.peek() === "\t") { stream.next(); return "ws-tab"; }
+                if (stream.peek() === "　") { stream.next(); return "ws-zenkaku"; }
+                stream.next(); return null;
+            }
+        };
+    });
+
+    // CodeMirrorの初期化
+    const cm = CodeMirror.fromTextArea(document.getElementById('hidden-editor'), {
+        mode: "markdown", lineNumbers: true, lineWrapping: true, styleActiveLine: true, undoDepth: 1000,
+        extraKeys: {
+            "Ctrl-S": saveFile,
+            "Ctrl-B": (i) => insert('**', '**'),
+            "Ctrl-I": (i) => insert('*', '*'),
+            "Ctrl-U": (i) => insert('<u>', '</u>'),
+            "Cmd-B": (i) => insert('**', '**'),
+            "Cmd-I": (i) => insert('*', '*'),
+            "Cmd-U": (i) => insert('<u>', '</u>'),
+            "Enter": (i) => handleEnter(i, false),
+            "Shift-Enter": (i) => handleEnter(i, true)
+        }
+    });
+    cm.addOverlay("whitespace-overlay"); // 不可視文字レイヤーを追加
+
+    // 未保存状態でのタブ閉じ・移動の防止
+    window.addEventListener('beforeunload', (event) => {
+        if (isModified) {
+            event.preventDefault();
+            event.returnValue = ''; 
+        }
+    });
+
+    // スクロール同期のフラグ管理
+    let isScrollingEditor = false;
+    let isScrollingPreview = false;
+
+    // エディタ側からのスクロール連動
+    cm.on("scroll", () => {
+        if (isScrollingPreview) return;
+        isScrollingEditor = true;
+        const scrollInfo = cm.getScrollInfo();
+        const scrollPercent = scrollInfo.top / (scrollInfo.height - scrollInfo.clientHeight);
+        preview.scrollTop = scrollPercent * (preview.scrollHeight - preview.clientHeight);
+        setTimeout(() => isScrollingEditor = false, 50);
+    });
+
+    // プレビュー側からのスクロール連動
+    preview.addEventListener("scroll", () => {
+        if (isScrollingEditor) return;
+        isScrollingPreview = true;
+        const scrollPercent = preview.scrollTop / (preview.scrollHeight - preview.clientHeight);
+        const scrollInfo = cm.getScrollInfo();
+        cm.scrollTo(null, scrollPercent * (scrollInfo.height - scrollInfo.clientHeight));
+        setTimeout(() => isScrollingPreview = false, 50);
+    });
+
+    // 日本語入力に配慮した改行処理
+    function handleEnter(i, shift) {
+        const useHardBr = brModeStrict ? !shift : shift;
+        i.replaceSelection(useHardBr ? "  \n" : "\n");
+    }
+
+    // 改行モードの切り替え通知
+    function toggleBrMode() {
+        brModeStrict = !brModeStrict;
+        document.getElementById('brModeBtn').innerText = brModeStrict ? "改行: 強制" : "改行: 標準";
+        const tip = document.getElementById('tips-container');
+        tip.innerText = brModeStrict ? "Enterで末尾にスペース2つ付加" : "Enterで通常改行";
+        tip.style.display = 'block'; setTimeout(() => tip.style.display = 'none', 2000);
+    }
+
+    // 1文字ずつのUndo履歴管理ロジック
+    cm.on("beforeChange", (i, change) => {
+        if (change.origin === "+input" && change.text[0].length === 1) { i.addKeyMap({}); }
+    });
+
+    // プレビュー更新および変更フラグのセット
+    function updatePreview() { preview.innerHTML = marked.parse(cm.getValue()); isModified = true; }
+    cm.on('change', updatePreview);
+
+    // 破壊的操作前の確認ダイアログ
+    async function checkUnsaved() { return !isModified || confirm("変更が保存されていません。破棄しますか？"); }
+    
+    // ファイル新規作成
+    async function newFile() { if (await checkUnsaved()) { fileHandle = null; cm.setValue(""); isModified = false; setView(window.innerWidth < 768 ? 'editor' : 'both'); updatePreview(); } }
+
+    // ファイルを開く（File System Access API 対応 / 非対応フォールバック）
+    async function openFile() { 
+        if (!await checkUnsaved()) return;
+        if (window.showOpenFilePicker) {
+            try { [fileHandle] = await window.showOpenFilePicker(); const f = await fileHandle.getFile(); cm.setValue(await f.text()); isModified = false; setView(window.innerWidth < 768 ? 'editor' : 'both'); } catch(e){}
+        } else {
+            const input = document.createElement('input'); input.type = 'file';
+            input.onchange = e => {
+                const file = e.target.files[0]; const reader = new FileReader();
+                reader.onload = f => { cm.setValue(f.target.result); isModified = false; setView(window.innerWidth < 768 ? 'editor' : 'both'); }; reader.readAsText(file);
+            }; input.click();
+        }
+    }
+
+    // ファイルの上書き・新規保存（File System Access API 対応 / 非対応フォールバック）
+    async function saveFile() {
+        if (window.showSaveFilePicker) {
+            if (!fileHandle) { try { fileHandle = await window.showSaveFilePicker({suggestedName:'note.md'}); } catch(e){return;} }
+            const w = await fileHandle.createWritable(); await w.write(cm.getValue()); await w.close();
+            isModified = false; updateSaveBtnState();
+        } else {
+            const blob = new Blob([cm.getValue()], {type: 'text/markdown'});
+            const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'note.md'; a.click();
+            isModified = false; updateSaveBtnState();
+        }
+    }
+
+    // 保存完了時のステータス表示
+    function updateSaveBtnState() {
+        document.getElementById('saveBtn').innerText = "✓ 保存済"; setTimeout(()=>document.getElementById('saveBtn').innerText="保存", 1500);
+    }
+
+    // 文字列挿入ユーティリティ（文字未選択時はタグの間にカーソルを置く）
+    function insert(b, a) { 
+        const s = cm.getSelection(); 
+        cm.replaceSelection(b + s + a); 
+        if (!s) {
+            const cur = cm.getCursor();
+            cm.setCursor(cur.line, cur.ch - a.length);
+        }
+        cm.focus(); 
+    }
+    
+    // テーブルテンプレート挿入
+    function insertTable() { insert("\n|  |  |  |\n| --- | --- | --- |\n|  |  |  |\n|  |  |  |\n", ""); }
+    
+    // テーマ（ライト/ダーク）切り替え
+    function toggleTheme() {
+        const t = document.body.getAttribute('data-theme') === 'light' ? 'dark' : 'light';
+        document.body.setAttribute('data-theme', t);
+        document.getElementById('themeBtn').innerText = t === 'light' ? '🌙 ダーク' : '☀️ ライト';
+        cm.refresh();
+    }
+    
+    // 表示モードの切り替え制御
+    function setView(m) {
+        document.body.classList.remove('mode-editor', 'mode-both', 'mode-preview');
+        document.body.classList.add('mode-' + m);
+        
+        // 編集モード時はPDF出力を無効化（白紙防止）
+        document.getElementById('pdfBtn').disabled = (m === 'editor');
+        
+        document.querySelectorAll('.view-controls button').forEach(b => b.classList.remove('active'));
+        document.getElementById('btn-' + m).classList.add('active');
+        
+        // 描画領域の変化に合わせてCodeMirrorを再描画
+        setTimeout(() => {
+            cm.refresh();
+            if (m !== 'preview') cm.focus();
+        }, 10);
+    }
+
+    // 初期化: 画面幅に応じて最適なモードをセット
+    if (window.innerWidth < 768) { setView('editor'); } else { setView('both'); }
+
+    isModified = false;
+</script>
+</body>
+</html>
