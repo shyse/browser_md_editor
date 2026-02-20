@@ -204,7 +204,7 @@
     const cm = CodeMirror.fromTextArea(document.getElementById('hidden-editor'), {
         mode: "markdown", lineNumbers: true, lineWrapping: true, styleActiveLine: true, undoDepth: 1000,
         extraKeys: {
-            "Ctrl-S": saveFile,
+            "Ctrl-S": (i) => { saveFile(); },
             "Ctrl-B": (i) => insert('**', '**'),
             "Ctrl-I": (i) => insert('*', '*'),
             "Ctrl-U": (i) => insert('<u>', '</u>'),
@@ -279,11 +279,18 @@
     // ファイル新規作成
     async function newFile() { if (await checkUnsaved()) { fileHandle = null; cm.setValue(""); isModified = false; setView(window.innerWidth < 768 ? 'editor' : 'both'); updatePreview(); } }
 
-    // ファイルを開く（File System Access API 対応 / 非対応フォールバック）
+    // ファイルを開く
     async function openFile() { 
         if (!await checkUnsaved()) return;
         if (window.showOpenFilePicker) {
-            try { [fileHandle] = await window.showOpenFilePicker(); const f = await fileHandle.getFile(); cm.setValue(await f.text()); isModified = false; setView(window.innerWidth < 768 ? 'editor' : 'both'); } catch(e){}
+            try { 
+                const [handle] = await window.showOpenFilePicker(); 
+                fileHandle = handle;
+                const f = await fileHandle.getFile(); 
+                cm.setValue(await f.text()); 
+                isModified = false; 
+                setView(window.innerWidth < 768 ? 'editor' : 'both'); 
+            } catch(e){}
         } else {
             const input = document.createElement('input'); input.type = 'file';
             input.onchange = e => {
@@ -293,12 +300,45 @@
         }
     }
 
-    // ファイルの上書き・新規保存（File System Access API 対応 / 非対応フォールバック）
+    // ドラッグ＆ドロップ対応
+    window.addEventListener('dragover', (e) => { e.preventDefault(); e.stopPropagation(); });
+    window.addEventListener('drop', async (e) => {
+        e.preventDefault(); e.stopPropagation();
+        if (!await checkUnsaved()) return;
+        const item = e.dataTransfer.items[0];
+        if (item && item.kind === 'file') {
+            // File System Access APIが使える場合はハンドルとして取得
+            if (item.getAsFileSystemHandle) {
+                fileHandle = await item.getAsFileSystemHandle();
+            }
+            const file = item.getAsFile();
+            const text = await file.text();
+            cm.setValue(text);
+            isModified = false;
+            setView(window.innerWidth < 768 ? 'editor' : 'both');
+        }
+    });
+
+    // ファイルの上書き・新規保存
     async function saveFile() {
         if (window.showSaveFilePicker) {
-            if (!fileHandle) { try { fileHandle = await window.showSaveFilePicker({suggestedName:'note.md'}); } catch(e){return;} }
-            const w = await fileHandle.createWritable(); await w.write(cm.getValue()); await w.close();
-            isModified = false; updateSaveBtnState();
+            // fileHandleが存在すれば上書き、なければ新規保存ダイアログを表示
+            if (!fileHandle) { 
+                try { 
+                    fileHandle = await window.showSaveFilePicker({suggestedName:'note.md'}); 
+                } catch(e){return;} 
+            }
+            try {
+                const w = await fileHandle.createWritable(); 
+                await w.write(cm.getValue()); 
+                await w.close();
+                isModified = false; 
+                updateSaveBtnState();
+            } catch(e) {
+                // 万が一権限エラーなどで書き込めない場合は再取得を試みる
+                fileHandle = await window.showSaveFilePicker({suggestedName:'note.md'});
+                saveFile();
+            }
         } else {
             const blob = new Blob([cm.getValue()], {type: 'text/markdown'});
             const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'note.md'; a.click();
@@ -311,7 +351,7 @@
         document.getElementById('saveBtn').innerText = "✓ 保存済"; setTimeout(()=>document.getElementById('saveBtn').innerText="保存", 1500);
     }
 
-    // 文字列挿入ユーティリティ（文字未選択時はタグの間にカーソルを置く）
+    // 文字列挿入ユーティリティ
     function insert(b, a) { 
         const s = cm.getSelection(); 
         cm.replaceSelection(b + s + a); 
@@ -337,23 +377,17 @@
     function setView(m) {
         document.body.classList.remove('mode-editor', 'mode-both', 'mode-preview');
         document.body.classList.add('mode-' + m);
-        
-        // 編集モード時はPDF出力を無効化（白紙防止）
         document.getElementById('pdfBtn').disabled = (m === 'editor');
-        
         document.querySelectorAll('.view-controls button').forEach(b => b.classList.remove('active'));
         document.getElementById('btn-' + m).classList.add('active');
-        
-        // 描画領域の変化に合わせてCodeMirrorを再描画
         setTimeout(() => {
             cm.refresh();
             if (m !== 'preview') cm.focus();
         }, 10);
     }
 
-    // 初期化: 画面幅に応じて最適なモードをセット
+    // 初期化
     if (window.innerWidth < 768) { setView('editor'); } else { setView('both'); }
-
     isModified = false;
 </script>
 </body>
