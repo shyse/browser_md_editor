@@ -27,7 +27,7 @@
         }
         [data-theme="light"] {
             /* --- ライトモード: 眩しさを抑えた落ち着いたグレーベース --- */
-            --bg-color: #f2f2f2; --text-color: #2c2c2c; --toolbar-bg: #e0e0e0;
+            --bg-color: #f2f2f2d5; --text-color: #2c2c2c; --toolbar-bg: #e0e0e0;
             --border-color: #cccccc; --accent-color: #005fb8; --cursor-color: #000000;
             --activeline-bg: #e8e8e8; --gutter-bg: #e0e0e0; --linenumber-color: #666666;
             --whitespace-color: rgba(0, 0, 0, 0.15); --preview-link: #1a73e8; --table-border: #bbbbbb;
@@ -148,6 +148,7 @@
         <button onclick="newFile()">新規</button>
         <button onclick="openFile()">開く</button>
         <button onclick="saveFile()" id="saveBtn" class="save-btn">保存</button>
+        <button onclick="saveFileAs()" class="wide-btn">別名保存</button>
         <button onclick="window.print()" id="pdfBtn" class="wide-btn">PDF</button>
         <button onclick="toggleBrMode()" id="brModeBtn" class="wide-btn">改行: 標準</button>
         <button onclick="toggleTheme()" id="themeBtn" class="wide-btn">☀️ ライト</button>
@@ -167,6 +168,8 @@
         <button onclick="insert('```\n', '\n```')" title="Code"><span class="btn-code">&lt;&gt;</span></button>
         <button onclick="insert('[', '](url)')" style="color:var(--preview-link);">Link</button>
         <button onclick="insertTable()">Table</button>
+
+        <div style="width:1px; height:18px; background:var(--border-color); margin: 0 4px;"></div>
         
         <div class="view-controls" style="margin-left:auto; display:flex; gap:4px;">
             <button id="btn-editor" onclick="setView('editor')">編集</button>
@@ -181,14 +184,14 @@
 </div>
 
 <script>
-    let fileHandle = null;     // ファイルシステムのハンドル保持用
-    let isModified = false;    // 変更ありフラグ
-    let brModeStrict = false;  // 改行モード管理
+    let fileHandle = null;     // 開いているファイルのハンドル（上書き保存に使用）
+    let isModified = false;    // 内容が変更されたかどうかのフラグ
+    let brModeStrict = false;  // Enterキーでの改行挙動（標準/強制）の切り替え
 
-    // marked.js の初期設定
+    // Markdown解析ライブラリ marked.js の初期設定
     marked.setOptions({ breaks: true, gfm: true });
 
-    // 不可視文字の表示ロジック（CodeMirrorオーバーレイアドオン）
+    // 半角スペース、タブ、全角スペースを可視化するためのCodeMirrorカスタムモード
     CodeMirror.defineMode("whitespace-overlay", function() {
         return {
             token: function(stream) {
@@ -200,11 +203,11 @@
         };
     });
 
-    // CodeMirrorの初期化
+    // エディタ本体 (CodeMirror) の初期化設定
     const cm = CodeMirror.fromTextArea(document.getElementById('hidden-editor'), {
         mode: "markdown", lineNumbers: true, lineWrapping: true, styleActiveLine: true, undoDepth: 1000,
         extraKeys: {
-            "Ctrl-S": (i) => { saveFile(); },
+            "Ctrl-S": (i) => { saveFile(); }, // 保存のショートカット
             "Ctrl-B": (i) => insert('**', '**'),
             "Ctrl-I": (i) => insert('*', '*'),
             "Ctrl-U": (i) => insert('<u>', '</u>'),
@@ -215,9 +218,9 @@
             "Shift-Enter": (i) => handleEnter(i, true)
         }
     });
-    cm.addOverlay("whitespace-overlay"); // 不可視文字レイヤーを追加
+    cm.addOverlay("whitespace-overlay"); // 不可視文字の可視化レイヤーを重ねる
 
-    // 未保存状態でのタブ閉じ・移動の防止
+    // ページを閉じる際に、変更がある場合は確認ダイアログを出す
     window.addEventListener('beforeunload', (event) => {
         if (isModified) {
             event.preventDefault();
@@ -225,11 +228,11 @@
         }
     });
 
-    // スクロール同期のフラグ管理
+    // スクロール同期用のフラグ
     let isScrollingEditor = false;
     let isScrollingPreview = false;
 
-    // エディタ側からのスクロール連動
+    // エディタをスクロールした際、プレビューを同期させる
     cm.on("scroll", () => {
         if (isScrollingPreview) return;
         isScrollingEditor = true;
@@ -239,7 +242,7 @@
         setTimeout(() => isScrollingEditor = false, 50);
     });
 
-    // プレビュー側からのスクロール連動
+    // プレビューをスクロールした際、エディタを同期させる
     preview.addEventListener("scroll", () => {
         if (isScrollingEditor) return;
         isScrollingPreview = true;
@@ -249,13 +252,13 @@
         setTimeout(() => isScrollingPreview = false, 50);
     });
 
-    // 日本語入力に配慮した改行処理
+    // 改行時の制御（Markdown特有の末尾スペース2つによる強制改行に対応）
     function handleEnter(i, shift) {
         const useHardBr = brModeStrict ? !shift : shift;
         i.replaceSelection(useHardBr ? "  \n" : "\n");
     }
 
-    // 改行モードの切り替え通知
+    // 改行挙動のモード切替とチップ表示
     function toggleBrMode() {
         brModeStrict = !brModeStrict;
         document.getElementById('brModeBtn').innerText = brModeStrict ? "改行: 強制" : "改行: 標準";
@@ -264,34 +267,35 @@
         tip.style.display = 'block'; setTimeout(() => tip.style.display = 'none', 2000);
     }
 
-    // 1文字ずつのUndo履歴管理ロジック
+    // 1文字ずつの入力を個別にUndo履歴に残すための処理
     cm.on("beforeChange", (i, change) => {
         if (change.origin === "+input" && change.text[0].length === 1) { i.addKeyMap({}); }
     });
 
-    // プレビュー更新および変更フラグのセット
+    // エディタの内容が変化した際のプレビュー更新と変更フラグの管理
     function updatePreview() { preview.innerHTML = marked.parse(cm.getValue()); isModified = true; }
     cm.on('change', updatePreview);
 
-    // 破壊的操作前の確認ダイアログ
+    // 保存されていない場合の確認ダイアログ
     async function checkUnsaved() { return !isModified || confirm("変更が保存されていません。破棄しますか？"); }
     
-    // ファイル新規作成
+    // ファイルを新規作成状態にする（ハンドルをリセット）
     async function newFile() { if (await checkUnsaved()) { fileHandle = null; cm.setValue(""); isModified = false; setView(window.innerWidth < 768 ? 'editor' : 'both'); updatePreview(); } }
 
-    // ファイルを開く
+    // ファイル選択ダイアログを表示して開く
     async function openFile() { 
         if (!await checkUnsaved()) return;
         if (window.showOpenFilePicker) {
             try { 
                 const [handle] = await window.showOpenFilePicker(); 
-                fileHandle = handle;
+                fileHandle = handle; // 保存用にハンドルを保持
                 const f = await fileHandle.getFile(); 
                 cm.setValue(await f.text()); 
                 isModified = false; 
                 setView(window.innerWidth < 768 ? 'editor' : 'both'); 
             } catch(e){}
         } else {
+            // File System Access API非対応ブラウザ用フォールバック
             const input = document.createElement('input'); input.type = 'file';
             input.onchange = e => {
                 const file = e.target.files[0]; const reader = new FileReader();
@@ -300,14 +304,14 @@
         }
     }
 
-    // ドラッグ＆ドロップ対応
+    // ドラッグ＆ドロップによるファイル読み込み
     window.addEventListener('dragover', (e) => { e.preventDefault(); e.stopPropagation(); });
     window.addEventListener('drop', async (e) => {
         e.preventDefault(); e.stopPropagation();
         if (!await checkUnsaved()) return;
         const item = e.dataTransfer.items[0];
         if (item && item.kind === 'file') {
-            // File System Access APIが使える場合はハンドルとして取得
+            // ドロップされたファイルから上書き保存用のハンドルを取得
             if (item.getAsFileSystemHandle) {
                 fileHandle = await item.getAsFileSystemHandle();
             }
@@ -319,14 +323,13 @@
         }
     });
 
-    // ファイルの上書き・新規保存
+    // 現在のファイルを上書き保存、または未保存なら新規保存ダイアログを表示
     async function saveFile() {
         if (window.showSaveFilePicker) {
-            // fileHandleが存在すれば上書き、なければ新規保存ダイアログを表示
+            // ハンドルがない（新規作成中）場合は別名保存へ流す
             if (!fileHandle) { 
-                try { 
-                    fileHandle = await window.showSaveFilePicker({suggestedName:'note.md'}); 
-                } catch(e){return;} 
+                await saveFileAs();
+                return;
             }
             try {
                 const w = await fileHandle.createWritable(); 
@@ -335,23 +338,43 @@
                 isModified = false; 
                 updateSaveBtnState();
             } catch(e) {
-                // 万が一権限エラーなどで書き込めない場合は再取得を試みる
-                fileHandle = await window.showSaveFilePicker({suggestedName:'note.md'});
-                saveFile();
+                console.error("保存失敗:", e);
+                // 権限切れ等の場合は別名保存ダイアログを出す
+                await saveFileAs();
             }
         } else {
+            // フォールバック: ダウンロード処理
             const blob = new Blob([cm.getValue()], {type: 'text/markdown'});
             const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'note.md'; a.click();
             isModified = false; updateSaveBtnState();
         }
     }
 
-    // 保存完了時のステータス表示
+    // 「名前を付けて保存」：常にダイアログを表示してパスを指定
+    async function saveFileAs() {
+        if (window.showSaveFilePicker) {
+            try {
+                // 既存のファイル名がある場合はそれを提案、なければデフォルト名
+                const suggested = fileHandle ? (await fileHandle.getFile()).name : 'note.md';
+                const newHandle = await window.showSaveFilePicker({ suggestedName: suggested });
+                fileHandle = newHandle; // 以降はこの新しいファイルに対して上書き
+                const w = await fileHandle.createWritable();
+                await w.write(cm.getValue());
+                await w.close();
+                isModified = false;
+                updateSaveBtnState();
+            } catch(e) {}
+        } else {
+            saveFile(); // API非対応時はダウンロード処理
+        }
+    }
+
+    // 保存ボタンのテキストを一時的に変更して完了を通知
     function updateSaveBtnState() {
         document.getElementById('saveBtn').innerText = "✓ 保存済"; setTimeout(()=>document.getElementById('saveBtn').innerText="保存", 1500);
     }
 
-    // 文字列挿入ユーティリティ
+    // エディタ内のカーソル位置に文字列を挿入、または選択範囲をタグで囲む
     function insert(b, a) { 
         const s = cm.getSelection(); 
         cm.replaceSelection(b + s + a); 
@@ -362,10 +385,10 @@
         cm.focus(); 
     }
     
-    // テーブルテンプレート挿入
+    // Markdownテーブルのひな形を挿入
     function insertTable() { insert("\n|  |  |  |\n| --- | --- | --- |\n|  |  |  |\n|  |  |  |\n", ""); }
     
-    // テーマ（ライト/ダーク）切り替え
+    // カラーテーマ（ライト/ダーク）の切り替え
     function toggleTheme() {
         const t = document.body.getAttribute('data-theme') === 'light' ? 'dark' : 'light';
         document.body.setAttribute('data-theme', t);
@@ -373,21 +396,25 @@
         cm.refresh();
     }
     
-    // 表示モードの切り替え制御
+    // レイアウト（編集のみ/プレビューのみ/分割）の切り替え
     function setView(m) {
         document.body.classList.remove('mode-editor', 'mode-both', 'mode-preview');
         document.body.classList.add('mode-' + m);
+        // 編集モードのみの場合はPDFボタンを無効化（表示内容がないため）
         document.getElementById('pdfBtn').disabled = (m === 'editor');
         document.querySelectorAll('.view-controls button').forEach(b => b.classList.remove('active'));
         document.getElementById('btn-' + m).classList.add('active');
+        // 表示切替に伴うエディタの再描画
         setTimeout(() => {
             cm.refresh();
             if (m !== 'preview') cm.focus();
         }, 10);
     }
 
-    // 初期化
+    // 初期起動時の画面幅に応じたレイアウト選択
     if (window.innerWidth < 768) { setView('editor'); } else { setView('both'); }
+
+    // 初期化時は変更なし状態
     isModified = false;
 </script>
 </body>
