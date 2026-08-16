@@ -11,6 +11,7 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.13/codemirror.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.13/mode/markdown/markdown.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.13/addon/mode/overlay.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
 
     <style>
         :root {
@@ -169,6 +170,7 @@
         <button onclick="insert('```\n', '\n```')" title="Code"><span class="btn-code">&lt;&gt;</span></button>
         <button onclick="insert('[', '](url)')" style="color:var(--preview-link);">Link</button>
         <button onclick="insertTable()">Table</button>
+        <button onclick="insertMermaid()">Mermaid</button>
 
         <div style="width:1px; height:18px; background:var(--border-color); margin: 0 4px;"></div>
         
@@ -191,6 +193,33 @@
 
     // Markdown解析ライブラリ marked.js の初期設定
     marked.setOptions({ breaks: true, gfm: true });
+
+    // Mermaid対応のカスタムレンダラーを設定
+    marked.use({
+        renderer: {
+            code(first, second, third) {
+                let text = '';
+                let lang = '';
+                if (first && typeof first === 'object') {
+                    // marked v13+ 互換 (引数が token オブジェクト)
+                    text = first.text || '';
+                    lang = first.lang || '';
+                } else {
+                    // 以前のバージョン互換 (code, infostring, escaped)
+                    text = first || '';
+                    lang = second || '';
+                }
+                
+                lang = lang ? lang.trim() : '';
+                if (lang === 'mermaid') {
+                    // 後で個別レンダリングしやすいように、特別なクラスとデータ属性を付与したコンテナを返す
+                    return `<div class="mermaid-preview" data-code="${encodeURIComponent(text)}"></div>`;
+                }
+                // falseを返すとデフォルトのレンダラーが適用される
+                return false;
+            }
+        }
+    });
 
     // 半角スペース、タブ、全角スペースを可視化するためのCodeMirrorカスタムモード
     CodeMirror.defineMode("whitespace-overlay", function() {
@@ -273,9 +302,68 @@
         if (change.origin === "+input" && change.text[0].length === 1) { i.addKeyMap({}); }
     });
 
+    let mermaidTimeout = null;
+
+    // Mermaidの初期化設定
+    function initMermaid(themeName) {
+        const mermaidTheme = themeName === 'light' ? 'default' : 'dark';
+        mermaid.initialize({
+            startOnLoad: false,
+            theme: mermaidTheme,
+            suppressErrorRendering: true,
+            securityLevel: 'loose'
+        });
+    }
+
     // エディタの内容が変化した際のプレビュー更新と変更フラグの管理
-    function updatePreview() { preview.innerHTML = marked.parse(cm.getValue()); isModified = true; }
+    function updatePreview() {
+        preview.innerHTML = marked.parse(cm.getValue());
+        isModified = true;
+        
+        // デバウンス処理: タイピング中のレンダリング負荷を抑える
+        if (mermaidTimeout) clearTimeout(mermaidTimeout);
+        mermaidTimeout = setTimeout(renderMermaidDiagrams, 300);
+    }
     cm.on('change', updatePreview);
+
+    // プレースホルダーをスキャンしてMermaid図を描画する
+    async function renderMermaidDiagrams() {
+        const containers = preview.querySelectorAll('.mermaid-preview');
+        for (let i = 0; i < containers.length; i++) {
+            const container = containers[i];
+            const code = decodeURIComponent(container.getAttribute('data-code'));
+            const id = `mermaid-${Date.now()}-${i}`;
+            
+            try {
+                // 構文の妥当性をチェック
+                const isValid = await mermaid.parse(code, { suppressErrors: true });
+                if (isValid) {
+                    const { svg } = await mermaid.render(id, code);
+                    container.innerHTML = svg;
+                } else {
+                    showMermaidError(container, code, "構文エラーがあります");
+                }
+            } catch (err) {
+                showMermaidError(container, code, err.message || "描画エラーが発生しました");
+            }
+        }
+    }
+
+    // エラー表示用の補助関数
+    function showMermaidError(container, code, message) {
+        container.innerHTML = `
+            <div style="border: 1px solid #ff6b6b; padding: 10px; border-radius: 4px; background: rgba(255, 107, 107, 0.1); margin: 10px 0; text-align: left;">
+                <strong style="color: #ff6b6b;">Mermaid 描画エラー:</strong> <span style="font-size: 12px; color: #ff8585;">${escapeHTML(message)}</span>
+                <pre style="margin: 5px 0 0 0; white-space: pre-wrap; font-size: 12px; opacity: 0.8; background: var(--code-bg); color: var(--code-text); padding: 8px; border-radius: 4px;">${escapeHTML(code)}</pre>
+            </div>
+        `;
+    }
+
+    function escapeHTML(str) {
+        return str.replace(/[&<>'"]/g, 
+            tag => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[tag] || tag)
+        );
+    }
 
     // 保存されていない場合の確認ダイアログ
     async function checkUnsaved() { return !isModified || confirm("変更が保存されていません。破棄しますか？"); }
@@ -389,11 +477,19 @@
     // Markdownテーブルのひな形を挿入
     function insertTable() { insert("\n|  |  |  |\n| --- | --- | --- |\n|  |  |  |\n|  |  |  |\n", ""); }
     
+    // Mermaidのひな形を挿入
+    function insertMermaid() { insert("\n```mermaid\ngraph TD\n    A[スタート] --> B(処理)\n    B --> C{条件分岐}\n    C -->|Yes| D[成功]\n    C -->|No| E[失敗]\n```\n", ""); }
+    
     // カラーテーマ（ライト/ダーク）の切り替え
     function toggleTheme() {
         const t = document.body.getAttribute('data-theme') === 'light' ? 'dark' : 'light';
         document.body.setAttribute('data-theme', t);
         document.getElementById('themeBtn').innerText = t === 'light' ? '🌙 ダーク' : '☀️ ライト';
+        
+        // Mermaidのテーマを更新して再描画
+        initMermaid(t);
+        renderMermaidDiagrams();
+        
         cm.refresh();
     }
     
@@ -411,6 +507,10 @@
             if (m !== 'preview') cm.focus();
         }, 10);
     }
+
+    // 初期起動時のテーマに合わせてMermaidを初期設定
+    const initialTheme = document.body.getAttribute('data-theme') || 'dark';
+    initMermaid(initialTheme);
 
     // 初期起動時の画面幅に応じたレイアウト選択
     if (window.innerWidth < 768) { setView('editor'); } else { setView('both'); }
