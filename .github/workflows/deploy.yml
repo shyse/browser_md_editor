@@ -37,4 +37,4 @@ jobs:
       # 3. SCP を使用したファイル転送
       - name: Deploy file
         run: |
-          scp browser_md_editor.html ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }}:/opt/docker/static-app/html/browser_md_editor/
+          scp browser_md_editor.html ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }}:${"DEPLOY_PATH"}
