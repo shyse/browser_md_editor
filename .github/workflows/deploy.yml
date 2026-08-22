@@ -1,6 +1,7 @@
 name: Deploy Markdown Editor
 
 on:
+  workflow_dispatch: # github GUIから手動実行可能にする
   push:
     branches:
       - main
